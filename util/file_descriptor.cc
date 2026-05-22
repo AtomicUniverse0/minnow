@@ -123,6 +123,7 @@ void FileDescriptor::read( vector<unique_ptr<string>>& buffers )
     total_size += x->size();
   }
 
+  // 涨知识了
   const ssize_t bytes_read = ::readv( fd_num(), iovecs.data(), static_cast<int>( iovecs.size() ) );
   if ( bytes_read < 0 ) {
     if ( internal_fd_->non_blocking_ and ( errno == EAGAIN or errno == EINPROGRESS ) ) {
@@ -139,7 +140,7 @@ void FileDescriptor::read( vector<unique_ptr<string>>& buffers )
 
   size_t remaining_size = bytes_read;
   for ( auto& buf : buffers ) {
-    if ( remaining_size <= buf->size() ) {
+    if ( remaining_size <= buf->size() ) { // TODO(yangli): 看起来有问题
       remaining_size -= buf->size();
     } else if ( remaining_size == 0 ) {
       buf->clear();

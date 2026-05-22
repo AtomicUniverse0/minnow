@@ -20,7 +20,7 @@ public:
   public:
     sockaddr_storage storage {}; //!< The wrapped struct itself.
     // NOLINTBEGIN (*-explicit-*)
-    operator sockaddr*();
+    operator sockaddr*(); // 当你把一个 Raw 类型的对象传给一个需要 sockaddr* 或 const sockaddr* 指针的传统 C 函数时，C++ 编译器会自动、隐式地帮你完成转换
     operator const sockaddr*() const;
     // NOLINTEND (*-explicit-*)
   };

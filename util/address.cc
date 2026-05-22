@@ -58,6 +58,8 @@ Address::Address( const string& node, const string& service, const addrinfo& hin
   addrinfo* resolved_address = nullptr;
 
   // look up the name or names
+  // 内部会动态在堆上申请内存，构建一个链表（因为一个域名可能对应多个 IP 地址，或者一个端口支持 TCP 和 UDP 两种协议），然后把链表的头指针写入 resolved_address 中
+  // 这个 resloved_address 是动态分配的，所以需要动态释放
   const int gai_ret = getaddrinfo( node.c_str(), service.c_str(), &hints, &resolved_address );
   if ( gai_ret != 0 ) {
     throw tagged_error( gai_error_category(), "getaddrinfo(" + node + ", " + service + ")", gai_ret );
@@ -91,7 +93,7 @@ static inline addrinfo make_hints( int ai_flags, int ai_family ) // NOLINT(*-swa
 //! \param[in] hostname to resolve
 //! \param[in] service name (from `/etc/services`, e.g., "http" is port 80)
 Address::Address( const string& hostname, const string& service )
-  : Address( hostname, service, make_hints( AI_ALL, AF_INET ) )
+  : Address( hostname, service, make_hints( AI_ALL, AF_INET ) ) // 似乎 AF_INET 会覆盖 AI_ALL的效果
 {}
 
 //! \param[in] ip address as a dotted quad ("1.1.1.1")

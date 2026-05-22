@@ -3,14 +3,31 @@
 #include <cstdlib>
 #include <iostream>
 #include <span>
+#include <sstream>
 #include <string>
 
 using namespace std;
 
 void get_URL( const string& host, const string& path )
 {
-  cerr << "Function called: get_URL(" << host << ", " << path << ")\n";
-  cerr << "Warning: get_URL() has not been implemented yet.\n";
+
+  stringstream ss;
+  ss << "GET " << path << " HTTP/1.1\r\n";
+  ss << "Host: " << host << "\r\n";
+  ss << "Connection: close\r\n";
+  ss << "\r\n"; // 这是必须的吗？
+
+  TCPSocket socket;
+  socket.connect(Address(host, "http"));
+  socket.write(ss.str());
+
+  string buffer{};
+  while( not socket.eof()){
+    socket.read(buffer);
+    cout << buffer;
+  }
+
+  socket.close();
 }
 
 int main( int argc, char* argv[] )
