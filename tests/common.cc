@@ -41,6 +41,11 @@ string Printer::prettify( string_view str, size_t max_length )
   return ss.str();
 }
 
+// "MAKE_TERMOUT"：这是 GNU Make（从 4.1 版本开始）在通过 Makefile 调用子命令时，如果检测到顶层用户是在终端运行的，会自动注入的一个环境变量
+// \033[：这是“控制序列引导符”（CSI, Control Sequence Introducer）。告诉终端，我们要调整样式了
+// 1;：这是一个参数，代表加粗 / 高亮（Bold / High intensity）
+// m：这是指令的结束标记
+// \033[m（等价于 \033[0m）：意思是重置所有属性（Reset / Normal）
 Printer::Printer() : is_terminal_( isatty( STDERR_FILENO ) or getenv( "MAKE_TERMOUT" ) ) {}
 
 string Printer::with_color( int color_value, string_view str ) const

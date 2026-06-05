@@ -10,12 +10,13 @@
 
 using StreamAndReassembler = std::pair<ByteStream, Reassembler>;
 
-template<std::derived_from<TestStep<ByteStream>> T>
+// T 必须是 TestStep<ByteStream> 的派生类（子类），或者是 TestStep<ByteStream> 本身
+template<std::derived_from<TestStep<ByteStream>> T> // 这东西怎么执行？
 struct ReassemblerByteStreamTestStep : public TestStep<StreamAndReassembler>
 {
   T step_;
 
-  template<typename... Targs>
+  template<typename... Targs> // 这一行似乎完全没用
   explicit ReassemblerByteStreamTestStep( T byte_stream_test_step )
     : TestStep<StreamAndReassembler>(), step_( std::move( byte_stream_test_step ) )
   {}

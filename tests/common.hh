@@ -78,10 +78,11 @@ class TestHarness
   std::string test_name_;
   T obj_;
 
-  std::vector<std::pair<std::string, int>> steps_executed_ {};
-  Printer pr_ {};
+  std::vector<std::pair<std::string, int>> steps_executed_;
+  Printer pr_;
 
 protected:
+  // 它是一个运算符，专门用来在程序运行期间（或者编译期间，取决于参数）获取一个表达式或类型的类型信息
   explicit TestHarness( std::string test_name, std::string_view desc, T&& object )
     : test_name_( std::move( test_name ) ), obj_( std::move( object ) )
   {
