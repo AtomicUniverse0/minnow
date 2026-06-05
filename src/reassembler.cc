@@ -106,6 +106,7 @@ void Reassembler::insert( uint64_t first_index, string data, bool is_last_substr
 
   if(stop_  and bytes_pending_ == 0){
     output.close();
+    ++expected_index_;
   }
 }
 

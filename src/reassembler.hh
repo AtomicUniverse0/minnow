@@ -35,6 +35,8 @@ public:
 
   // How many bytes are stored in the Reassembler itself?
   uint64_t bytes_pending() const;
+
+  uint64_t checkpoint() const { return expected_index_; }
 private:
 
   uint64_t bytes_pending_ = 0;
