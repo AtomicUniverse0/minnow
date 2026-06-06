@@ -95,7 +95,7 @@ int main()
       test.execute( AckReceived { Wrap32 { isn + 1 } }.with_win( 7 ) );
       test.execute( ExpectNoSegment {} );
       test.execute( Push { "1234567" } );
-      test.execute( Close {} );
+      test.execute( Close {} ); // 写者被close了，说明要发FIN了
       test.execute( ExpectMessage {}.with_no_flags().with_data( "1234567" ) );
       test.execute( ExpectNoSegment {} ); // window is full
       test.execute( AckReceived { Wrap32 { isn + 8 } }.with_win( 1 ) );

@@ -25,7 +25,7 @@ struct TCPSenderMessage
 {
   Wrap32 seqno { 0 };
   bool SYN { false };
-  Buffer payload {};
+  Buffer payload {}; // 内部是一个指向 字符串 的指针，拷贝开销不大
   bool FIN { false };
 
   // How many sequence numbers does this segment use?
