@@ -4,6 +4,10 @@
 #include "tcp_receiver_message.hh"
 #include "tcp_sender_message.hh"
 
+/*
+  可恶，这个是2023年的作业，可是手里只有2025年的文档，接口有点对不上，只能硬着头皮写了
+*/
+
 class TCPSender
 {
   Wrap32 isn_;
