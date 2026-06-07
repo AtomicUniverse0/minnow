@@ -1,6 +1,8 @@
 #include "tcp_sender.hh"
 #include "tcp_config.hh"
+#include "tcp_sender_message.hh"
 
+#include <optional>
 #include <random>
 
 using namespace std;
@@ -29,65 +31,130 @@ uint64_t TCPSender::consecutive_retransmissions() const
 // 这里进行真正的数据包发送
 optional<TCPSenderMessage> TCPSender::maybe_send()
 {
-  if( !maybe_send_.has_value() ){
+  if(pending_segments_.empty() ){
     return nullopt;
   }
 
-  optional<TCPSenderMessage> res = maybe_send_;
-  maybe_send_ = nullopt;
+  optional<TCPSenderMessage> res = pending_segments_.front();
+  pending_segments_.pop_front();
 
   return res;
 }
 
-// 何时发送FIN?
-// 如果发出了有长度的数据，就需要启动定时器
-/*
-  梳理一下发送数据的大体逻辑:
-    如果未发送SYN，需要发送SYN，当作window size 为 1  
-    如果outbound_stream里没数据，则返回
-    如果window size = 0，则当成1使用
-    如果window size > 0 ，则这是常规情况
+bool TCPSender::should_send_fin(const Reader& outbound_stream) const {
+  if(not outbound_stream.is_finished()){
+    return false;
+  }
 
-    要求每次push，如果有数据可发送，必须先调用 maybe_send()才行
+  if(fin_sent_){
+    return false;
+  }
+
+  bool is_syn_packet = false; 
+  if( not pending_segments_.empty()){
+    is_syn_packet = pending_segments_.front().SYN;
+  }
+
+  return (window_size_ >= 1 or is_syn_packet);
+}
+
+bool TCPSender::nothing_to_send(const Reader& outbound_stream) const {
+  if(outbound_stream.bytes_buffered() > 0){
+    return false;
+  }
+  if(not syn_sent_){
+    return false;
+  }
+
+  return( fin_sent_ or not outbound_stream.is_finished());
+}
+
+void TCPSender::save_to_sending_window(const TCPSenderMessage& packet, bool window_exhausted){
+  uint64_t key = isn_.unwrap(zero_point_, checkpoint_);
+  sending_window_.emplace(key, SendingWindowEntry(packet, window_exhausted));
+  isn_ = isn_ + packet.sequence_length();
+  sequence_numbers_in_flight_ += packet.sequence_length();
+}
+
+// 如果在第一次尝试发包时，发现window耗尽了，就发送一个单字符的
+std::optional<TCPSenderMessage> TCPSender::build_packet(Reader& outbound_stream){
+  std::optional<TCPSenderMessage> packet;
+
+  // 边界情况，单拿出来写，有代码冗余，但可读性更强
+  if(window_exhausted_){
+    assert (syn_sent_ and window_size_ == 0);
+
+    if(outbound_stream.bytes_buffered() > 0){
+      auto sv = outbound_stream.peek().substr(0, 1);
+      packet = TCPSenderMessage{isn_, false, Buffer{string(sv.data(), sv.size())}, false};
+      
+      outbound_stream.pop(1);
+
+    }else if(outbound_stream.is_finished() and not fin_sent_){
+      packet = TCPSenderMessage{isn_, false, Buffer{}, true};
+      fin_sent_ = true;
+    }
+
+    return packet;
+  }
+
+  if(!syn_sent_){
+    assert(pending_segments_.empty());
+    // assert(window_size_ == 0); 真逆天，有些测试就是在syn包发出去之前就把window size设置成非0的
+    syn_sent_ = true;
+    packet = TCPSenderMessage{isn_, true, Buffer{}, false};
+  }else if(outbound_stream.bytes_buffered() > 0 and window_size_ > 0){
+    uint16_t payload_size = std::min(outbound_stream.bytes_buffered(), TCPConfig::MAX_PAYLOAD_SIZE);
+    payload_size = std::min(payload_size, window_size_);
+    assert(payload_size > 0);
+
+    auto sv = outbound_stream.peek().substr(0, payload_size);
+    packet = TCPSenderMessage{isn_,false,  Buffer{string(sv.data(), sv.size())},false};
+    outbound_stream.pop(payload_size);
+    window_size_ -= payload_size;
+  }
+
+  if( should_send_fin(outbound_stream) ){
+    if(not packet.has_value()){
+      packet = TCPSenderMessage{isn_, false, Buffer{}, false};
+    }
+    packet->FIN = true;
+    window_size_ -= 1;
+    fin_sent_ = true;
+  }
+
+  return packet;
+}
+/**
+  每当outbound_stream的状态被改变了时，就调用这个函数
+  状态包括有数据没读完，或者outbound_stream被close了
 */
 void TCPSender::push( Reader& outbound_stream )
 {
   /*
     判断是否有必要发包， 优先级：SYN > 没有数据可发
   */
-  if(outbound_stream.bytes_buffered() == 0 and syn_sent_){
-    return;
-  }
+  while ( not nothing_to_send(outbound_stream) ){
+    auto  packet = build_packet(outbound_stream);
+    if(not packet.has_value()){
+      return;
+    }
 
-  // 执行到这里，说明有包可发送，先要求 maybe_send_ 为空
-  assert(!maybe_send_.has_value());
-  // 构造数据包，存到maybe_sent_里
-  if(!syn_sent_){
-    assert(window_size_ == 0);
-    maybe_send_ = TCPSenderMessage{isn_, true, Buffer{}, false};
-    syn_sent_ = true;
-  }else{
-    uint16_t payload_size = std::min(outbound_stream.bytes_buffered(), TCPConfig::MAX_PAYLOAD_SIZE);
-    payload_size = std::min(payload_size, window_size_);
-    payload_size = payload_size == 0 ? 1 : payload_size; // window size为0时当成1使用
-    auto sv = outbound_stream.peek().substr(0, payload_size);
-    maybe_send_ = TCPSenderMessage{isn_,
-                                   false, 
-                                   Buffer{string(sv.data(), sv.size())},
-                                    false};
-    
-    outbound_stream.pop(payload_size);
-    window_size_ -= payload_size;
-  }
+    if( !resend_timer_.started() ){
+      resend_timer_.start();
+    }
 
-  assert(maybe_send_.has_value());
+    save_to_sending_window(packet.value(), window_exhausted_);
+    pending_segments_.push_back(packet.value()); 
 
-  if( !resend_timer_.started() ){
-    resend_timer_.start();
+    if(window_exhausted_){ 
+      window_exhausted_ = false;
+      break;
+    }
+    if(packet->SYN){
+      break;
+    }
   }
-  sending_window_[isn_.unwrap(zero_point_, checkpoint_)] = maybe_send_.value(); 
-  isn_ = isn_ + maybe_send_.value().sequence_length();
-  sequence_numbers_in_flight_ += maybe_send_.value().sequence_length();
 }
 
 TCPSenderMessage TCPSender::send_empty_message() const
@@ -99,39 +166,62 @@ TCPSenderMessage TCPSender::send_empty_message() const
 
 void TCPSender::receive( const TCPReceiverMessage& msg )
 {
-  // Your code here.
-  window_size_ = msg.window_size;
-
   if( not msg.ackno.has_value() ){
+    window_exhausted_ = (msg.window_size == 0);
+    window_size_ = msg.window_size; // what can i say?
     return;
   }
 
-  assert(not sending_window_.empty());
-
-  uint64_t absolute_ackno = msg.ackno->unwrap(zero_point_, checkpoint_);
-  if(absolute_ackno <= sending_window_.begin()->first){
-    return; // 重复的？
+  uint64_t ackno = msg.ackno->unwrap(zero_point_, checkpoint_);
+  uint64_t isnno = isn_.unwrap(zero_point_, checkpoint_);
+  if(ackno > isnno){
+    return; // 不可能的ackno
   }
 
-  uint64_t n = sending_window_.begin()->first + sending_window_.begin()->second.sequence_length();
-  while(not sending_window_.empty() and absolute_ackno >= n){
-    sequence_numbers_in_flight_ -= sending_window_.begin()->second.sequence_length();
-    checkpoint_ = n;
+  if(sending_window_.empty()){
+    return; // 看起来是个无效的ack
+  }
+  window_exhausted_ = (msg.window_size == 0);
+
+  uint64_t left_bound = sending_window_.begin()->first;
+  // 处理重复的
+  if(ackno < left_bound){
+    return; 
+  }
+  if(ackno == left_bound){
+    window_size_ = std::max(window_size_, msg.window_size);
+    return;
+  }
+
+  // 两种情况，第一，sending_window.begin()被完全ack了，第二，部分ack了
+  uint64_t right_bound = sending_window_.begin()->first + sending_window_.begin()->second.segment().sequence_length();
+  while( (not sending_window_.empty()) and ackno >= right_bound){
+    sequence_numbers_in_flight_ -= sending_window_.begin()->second.segment().sequence_length();
+    checkpoint_ = right_bound;
     sending_window_.erase(sending_window_.begin());
     if( not sending_window_.empty() ){
-      n = sending_window_.begin()->first + sending_window_.begin()->second.sequence_length();
+      left_bound = sending_window_.begin()->first;
+      right_bound = sending_window_.begin()->first + sending_window_.begin()->second.segment().sequence_length();
     }
+  }
+  resend_timer_.stop();
+  resend_timer_.start();
+
+  // 更新window_size 
+  if(sending_window_.empty() || ackno <= left_bound){
+    // 被完全ack了，此时的window_size 可以放心更新
+    window_size_ = msg.window_size;
+  }else{ // 部分更新
+    assert(ackno > left_bound and ackno < right_bound);
+    uint16_t unacked_bytes = right_bound - ackno;
+    // current window size = old_window_size - packet length
+    // current_window_size + window size - (pakcet length - acked length)
+    window_size_ += msg.window_size - unacked_bytes;
   }
 
   if(sending_window_.empty() and resend_timer_.started()){
     resend_timer_.stop();
   }
-
-  if(sending_window_.empty() and fin_available_){
-    assert(not maybe_send_.has_value());
-    maybe_send_ = TCPSenderMessage{isn_, false, Buffer{}, true};
-  }
-
 }
 
 void TCPSender::tick( const size_t ms_since_last_tick )
@@ -144,8 +234,13 @@ void TCPSender::tick( const size_t ms_since_last_tick )
 
   if(resend_timer_.timeout()){
     assert(!sending_window_.empty());
-    assert(!maybe_send_.has_value());
-    resend_timer_.reset();
-    maybe_send_ = sending_window_.begin()->second;
+    if( sending_window_.begin()->second.window_exhausted() ){
+      // 边界情况，此时不增加重传的RTO
+      resend_timer_.stop();
+      resend_timer_.start();
+    }else{
+      resend_timer_.reset();
+    }
+    pending_segments_.push_back( sending_window_.begin()->second.segment() );
   }
 }

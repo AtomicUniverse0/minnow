@@ -5,6 +5,7 @@
 #include "tcp_sender_message.hh"
 
 #include <cassert>
+#include <deque>
 #include <map>
 
 // 用来实现超时重传的一个计时器
@@ -53,6 +54,16 @@ public:
     started_ = false;
   }
 };
+class SendingWindowEntry{
+private:
+  TCPSenderMessage segment_;
+  bool window_exhausted_; // 发送这个包前window是否被耗尽
+public:
+  SendingWindowEntry(TCPSenderMessage segment, bool window_exhausted) : segment_(std::move(segment)), window_exhausted_(window_exhausted) {}
+
+  const TCPSenderMessage& segment() const { return segment_; }
+  bool window_exhausted() const { return window_exhausted_; }
+};
 
 class TCPSender
 {
@@ -63,13 +74,23 @@ private:
   uint64_t initial_RTO_ms_;
 
   bool syn_sent_ = false;
-  bool fin_available_ = false;
+  bool fin_sent_ = false;
+  bool should_send_fin_ = false;
+  bool window_exhausted_ = false;
   uint64_t sequence_numbers_in_flight_ ;
   uint16_t window_size_ = 0; // 由TCPReceiver通过ACK告知的窗口大小，初始为0
-  std::map<uint64_t, TCPSenderMessage> sending_window_; // {key是绝对序号，value是对应的segment}
-  std::optional<TCPSenderMessage> maybe_send_;
+  std::map<uint64_t, SendingWindowEntry> sending_window_; // {key是绝对序号，value是对应的segment}
+  std::deque<TCPSenderMessage> pending_segments_; // 还没有被发送出去的segment，按照发送顺序排列
 
   ResendTimer resend_timer_;
+
+  bool should_send_fin(const Reader& outbound_stream) const ;
+
+  bool nothing_to_send(const Reader& outbound_stream) const ;
+
+  void save_to_sending_window(const TCPSenderMessage& packet, bool window_exhausted);
+
+  std::optional<TCPSenderMessage> build_packet(Reader& outbound_stream);
 
 public:
   /* Construct TCP sender with given default Retransmission Timeout and possible ISN */
