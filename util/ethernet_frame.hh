@@ -9,7 +9,7 @@
 struct EthernetFrame
 {
   EthernetHeader header {};
-  std::vector<Buffer> payload {};
+  std::vector<Buffer> payload {}; // 神奇，为何是vector<BUffer>，难道纯Buffer不好吗
 
   void parse( Parser& parser )
   {

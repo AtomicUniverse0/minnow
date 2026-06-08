@@ -1,6 +1,7 @@
 #pragma once
 
 #include "address.hh"
+#include "arp_message.hh"
 #include "ethernet_frame.hh"
 #include "ipv4_datagram.hh"
 
@@ -40,6 +41,24 @@ private:
 
   // IP (known as Internet-layer or network-layer) address of the interface
   Address ip_address_;
+
+  std::queue<EthernetFrame> maybe_sent_queue_; // 等待硬件发出的数据报
+
+  std::unordered_map<uint32_t, std::pair<EthernetAddress, size_t>> arp_table_; // ARP表，IP地址到以太网地址的映射，并且记录了条目在arp中存活的时间
+
+  std::unordered_map<uint32_t, size_t> arp_request_ticks_; // 记录上次发送ARP到现在经过了多久
+  std::unordered_map<uint32_t, std::vector<InternetDatagram>> waiting_datagrams_; // 等待ARP解析的IP数据报，I
+
+  const static size_t ARP_TIMEOUT = 30000; // 数据最多在 arp_table_ 里存活30秒
+  const static size_t ARP_RETRY_INTERVAL = 5000; // arp数据包的最短重尝试
+
+  EthernetFrame build_arp_request( const Address& dst);
+
+  EthernetFrame build_arp_reply( const ARPMessage& req_arp_message, const EthernetAddress& next_eth);
+
+  EthernetFrame build_ethernet_frame(const InternetDatagram& dgram, const EthernetAddress& dst_eth_addr);
+
+  void recv_handle_arp_message(const EthernetFrame& frame);
 
 public:
   // Construct a network interface with given Ethernet (network-access-layer) and IP (internet-layer)

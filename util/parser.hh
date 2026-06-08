@@ -117,6 +117,7 @@ public:
   void set_error() { error_ = true; }
   void remove_prefix( size_t n ) { input_.remove_prefix( n ); }
 
+  // 将内部的 bufferList 解析为整数
   template<std::unsigned_integral T>
   void integer( T& out )
   {
@@ -138,7 +139,7 @@ public:
       }
     }
   }
-
+  // span 底层是两个指针，不拥有数据，却可以窥探数据或者修改数据
   void string( std::span<char> out )
   {
     check_size( out.size() );
