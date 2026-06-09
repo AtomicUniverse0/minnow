@@ -36,7 +36,6 @@ void Router::route() {
   }
 }
 
-
 void Router::route_datagram( InternetDatagram& datagram ){
   for(auto& rtable_iter : std::views::reverse(routing_table_)){
     auto& vec = rtable_iter.second;
