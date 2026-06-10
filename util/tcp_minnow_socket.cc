@@ -94,8 +94,11 @@ void TCPMinnowSocket<AdaptT>::_initialize_TCP( const TCPConfig& config )
     _datagram_adapter.fd(),
     Direction::In,
     [&] {
+      // 从 fd 里读出数据，如果对应于当前的TCP连接，则交给 TCPPeer 处理
       if ( auto seg = _datagram_adapter.read() ) {
+        // 交给TCPPeer里的 sender 和 receiver 处理
         _tcp->receive( move( seg.value() ) );
+        // 构造一个TCP segment，并把它放到发送队列里
         collect_segments();
       }
 
@@ -192,6 +195,7 @@ void TCPMinnowSocket<AdaptT>::_initialize_TCP( const TCPConfig& config )
 static inline pair<FileDescriptor, FileDescriptor> socket_pair_helper( const int type )
 {
   array<int, 2> fds {};
+  // socketpair(): 创建一对全双工的本地通信套接字,pipe 是半双工的
   CheckSystemCall( "socketpair", ::socketpair( AF_UNIX, type, 0, fds.data() ) );
   return { FileDescriptor( fds[0] ), FileDescriptor( fds[1] ) };
 }
@@ -247,13 +251,14 @@ void TCPMinnowSocket<AdaptT>::connect( const TCPConfig& c_tcp, const FdAdapterCo
     throw runtime_error( "TCPPeer not successfully initialized" );
   }
 
-  _tcp->push();
+  _tcp->push(); // 发送SYN，开始连接
   collect_segments();
 
   if ( _tcp->sender().sequence_numbers_in_flight() != 1 ) {
     throw runtime_error( "After TCPConnection::connect(), expected sequence_numbers_in_flight() == 1" );
   }
 
+  // 用poll来等待对方的ack，只有收到了，才向后推进
   _tcp_loop( [&] { return _tcp->sender().sequence_numbers_in_flight() == 1; } );
   if ( not _tcp->inbound_reader().has_error() ) {
     cerr << "Successfully connected to " << c_ad.destination.to_string() << ".\n";
@@ -278,6 +283,7 @@ void TCPMinnowSocket<AdaptT>::listen_and_accept( const TCPConfig& c_tcp, const F
   _datagram_adapter.config_mut() = c_ad;
   _datagram_adapter.set_listening( true );
 
+  // 确保第二次和第三次握手
   cerr << "DEBUG: Listening for incoming connection...\n";
   _tcp_loop( [&] { return ( not _tcp->has_ackno() ) or ( _tcp->sender().sequence_numbers_in_flight() ); } );
   cerr << "New connection from " << _datagram_adapter.config().destination.to_string() << ".\n";
@@ -292,6 +298,7 @@ void TCPMinnowSocket<AdaptT>::_tcp_main()
     if ( not _tcp.has_value() ) {
       throw runtime_error( "no TCP" );
     }
+  // 奇怪，似乎当处理一次事件后，_tcp_loop就会退出？
     _tcp_loop( [] { return true; } );
     shutdown( SHUT_RDWR );
     if ( not _tcp.value().active() ) {

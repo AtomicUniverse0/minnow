@@ -72,6 +72,7 @@ EventLoop::RuleHandle EventLoop::add_rule( const size_t category_id,
 
 void EventLoop::RuleHandle::cancel()
 {
+  // 涨知识，weak_ptr 原来需要通过 lock 来使用
   const shared_ptr<BasicRule> rule_shared_ptr = rule_weak_ptr_.lock();
   if ( rule_shared_ptr ) {
     rule_shared_ptr->cancel_requested = true;
@@ -143,6 +144,12 @@ EventLoop::Result EventLoop::wait_next_event( const int timeout_ms )
       continue;
     }
 
+    /*
+    根据 POSIX 标准，即便你把 events 设为 0，内核依然会默默帮你监控这个 fd 的异常状态。也就是说，如果这个 fd 发生了以下三种情况，内核依然会通知你：
+      POLLERR：发生硬件或底层的异步错误。
+      POLLHUP：通道被挂断（比如对端关闭了连接，TCP 收到 FIN/RST）。
+POLLNVAL：文件描述符非法（比如你传了一个根本不存在或者已经 close() 掉的 fd）
+    */
     if ( this_rule.interest() ) {
       pollfds.push_back( { this_rule.fd.fd_num(), static_cast<int16_t>( this_rule.direction ), 0 } );
       something_to_poll = true;
@@ -180,6 +187,13 @@ EventLoop::Result EventLoop::wait_next_event( const int timeout_ms )
       /* see if fd is a socket */
       int socket_error = 0;
       socklen_t optlen = sizeof( socket_error );
+      /*
+        this_rule.fd.fd_num()：你要检查的 Socket 的文件描述符（FD）。
+        SOL_SOCKET：代表你要查询的是通用套接字级别的属性（而不是 TCP 或 IP 特有的属性）。
+        SO_ERROR：核心参数。意思是“我要获取这个 Socket 上的错误状态（Pending Error）”。
+        &socket_error：告诉系统，把查到的错误码写到这个变量里。
+        &optlen：传入刚才计算的长度，函数返回时系统也会更新实际写入的长度。
+      */
       const int ret = getsockopt( this_rule.fd.fd_num(), SOL_SOCKET, SO_ERROR, &socket_error, &optlen );
       if ( ret == -1 and errno == ENOTSOCK ) {
         cerr << "error on polled file descriptor for rule \"" << _rule_categories.at( this_rule.category_id ).name
@@ -199,9 +213,9 @@ EventLoop::Result EventLoop::wait_next_event( const int timeout_ms )
     }
 
     const auto poll_ready = static_cast<bool>( this_pollfd.revents & this_pollfd.events );
-    const auto poll_hup = static_cast<bool>( this_pollfd.revents & POLLHUP );
+    const auto poll_hup = static_cast<bool>( this_pollfd.revents & POLLHUP ); // POLLHUP 表示文件描述符（FD）的对端已经关闭了通道（或者是连接已经断开）
     if ( poll_hup && ( ( this_pollfd.events && !poll_ready ) or ( this_rule.direction == Direction::Out ) ) ) {
-      // if we asked for the status, and the _only_ condition was a hangup, this FD is defunct:
+      // if we asked for the status, and the _only_ condition was a hangup, this FD is defunct(死人，已废弃的):
       //   - if it was POLLIN and nothing is readable, no more will ever be readable
       //   - if it was POLLOUT, it will not be writable again
       // additionally, consider FD defunct if rule will only query for Direction::Out

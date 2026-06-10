@@ -73,6 +73,7 @@ optional<EthernetFrame> maybe_receive_frame( FileDescriptor& fd )
 
   EthernetFrame frame;
   vector<Buffer> buffers;
+  // std::identity() 是指将 string 原封不动转成 Buffer
   ranges::transform( strs, back_inserter( buffers ), identity() );
   if ( not parse( frame, buffers ) ) {
     return {};
@@ -90,6 +91,7 @@ private:
 
   void send_pending()
   {
+    // 如果网卡里有数据要发，就从网卡里取出来，写到第一个套接字里
     while ( auto frame = _interface.maybe_send() ) {
       _data_socket_pair.first.write( serialize( frame.value() ) );
     }
@@ -102,6 +104,7 @@ public:
 
   optional<TCPSegment> read()
   {
+    // 从 first 里读出发过来的数据包
     auto frame_opt = maybe_receive_frame( _data_socket_pair.first );
     if ( not frame_opt ) {
       return {};
@@ -109,6 +112,7 @@ public:
     EthernetFrame frame = move( frame_opt.value() );
 
     // Give the frame to the NetworkInterface. Get back an Internet datagram if frame was carrying one.
+    // 如果是ARP，那么网卡自会处理，如果是IP，那么就向上传
     optional<InternetDatagram> ip_dgram = _interface.recv_frame( frame );
 
     // The incoming frame may have caused the NetworkInterface to send a frame
@@ -151,7 +155,8 @@ public:
   {
     FdAdapterConfig multiplexer_config;
 
-    _local_address = Address { _local_address.ip(), uint16_t( random_device()() ) };
+    // 随机分配端口号
+    _local_address = Address { _local_address.ip(), static_cast<uint16_t>( random_device()() ) };
     cerr << "DEBUG: Connecting from " << _local_address.to_string() << "...\n";
     multiplexer_config.source = _local_address;
     multiplexer_config.destination = address;
@@ -180,13 +185,14 @@ public:
 // NOLINTBEGIN(*-cognitive-complexity)
 void program_body( bool is_client, const string& bounce_host, const string& bounce_port, const bool debug )
 {
-  UDPSocket internet_socket;
+  UDPSocket internet_socket; // 创建了一个新的udp套接字
   Address bounce_address { bounce_host, bounce_port };
 
   /* let bouncer know where we are */
   internet_socket.sendto( bounce_address, "" );
   internet_socket.sendto( bounce_address, "" );
   internet_socket.sendto( bounce_address, "" );
+  // 告诉操作系统内核：“我这个 Socket 以后只和这个特定的 IP 和端口（addr）通信了，请帮我把它设为默认目标
   internet_socket.connect( bounce_address );
 
   /* set up the router */
@@ -194,6 +200,18 @@ void program_body( bool is_client, const string& bounce_host, const string& boun
 
   unsigned int host_side {};
   unsigned int internet_side {};
+
+  /*
+    创建如下的虚拟路由器
+
+    192.168.0.1(host_side)                                      172.16.0.1 (host_side)         
+    client_router                                               server_router 
+    10.0.0.192 (internet_side)                                  10.0.0.172 (internet_side)
+
+    以192.168开头的，发给host_side                                 以172.开头的，发给host_side
+    以10开头的，发给internet_side                                  以10开头的，发给internet_side
+    以172开头的，发给internet_side,下一跳是10.0.0.172               以192.168开头的，发给internet_side,下一跳是10.0.0.192
+  */
 
   if ( is_client ) {
     host_side = router.add_interface( { random_router_ethernet_address(), Address { "192.168.0.1" } } );
@@ -219,6 +237,7 @@ void program_body( bool is_client, const string& bounce_host, const string& boun
   queue<EthernetFrame> router_to_internet;
 
   /* set up the network */
+  // 这个主要是关注路由器的网络状况，没有TCP的状况
   thread network_thread( [&]() {
     try {
       EventLoop event_loop;
@@ -281,6 +300,7 @@ void program_body( bool is_client, const string& bounce_host, const string& boun
       } );
 
       while ( true ) {
+        // 水平触发
         if ( EventLoop::Result::Exit == event_loop.wait_next_event( 10 ) ) {
           cerr << "Exiting...\n";
           return;
@@ -305,6 +325,7 @@ void program_body( bool is_client, const string& bounce_host, const string& boun
 
   try {
     if ( is_client ) {
+      // 看起来，connect，当收到第二次握手时，就返回了
       sock.connect( Address { "172.16.0.100", 1234 } );
     } else {
       sock.bind( Address { "172.16.0.100", 1234 } );

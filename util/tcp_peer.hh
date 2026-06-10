@@ -16,6 +16,7 @@ class TCPPeer
   TCPReceiver receiver_ {};
   Reassembler reassembler_ {};
 
+  // 当要发送数据时，往outbound_stream_里写，当要接受数据时，从 inbound_stream_里读
   ByteStream outbound_stream_ { cfg_.send_capacity }, inbound_stream_ { cfg_.recv_capacity };
 
   bool need_send_ {};
@@ -29,6 +30,7 @@ public:
   void push() { sender_.push( outbound_stream_.reader() ); };
   void tick( uint64_t ms_since_last_tick ) { sender_.tick( ms_since_last_tick ); }
 
+  // receiver_.send()纯构造一个 ack 包，不改变 receiver 的状态，所以可以多次调用，直到 ack 包被发送出去
   bool has_ackno() const { return receiver_.send( inbound_stream_.writer() ).ackno.has_value(); }
 
   bool active() const
@@ -40,6 +42,7 @@ public:
            or sender_.sequence_numbers_in_flight();
   }
 
+  // tcp 的 sender 和 receiver 都会收到对方的消息
   void receive( TCPSegment seg )
   {
     if ( seg.reset or inbound_reader().has_error() ) {

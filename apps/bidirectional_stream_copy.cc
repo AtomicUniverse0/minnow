@@ -33,8 +33,8 @@ void bidirectional_stream_copy( Socket& socket )
     [&] {
       string data;
       data.resize( _outbound.writer().available_capacity() );
-      _input.read( data );
-      _outbound.writer().push( move( data ) );
+      _input.read( data ); // 从STDIN 读取用户输入
+      _outbound.writer().push( move( data )  ); // _outbound 将被 sender_ 使用
       if ( _input.eof() ) {
         _outbound.writer().close();
       }
@@ -46,7 +46,7 @@ void bidirectional_stream_copy( Socket& socket )
     [&] { _outbound.writer().close(); } );
 
   // rule 2: read from outbound byte stream into socket
-  _eventloop.add_rule(
+  _eventloop.add_rule( // 这个是TCP持有的那个pair中的一个，将outbound 里的数据写入到socket里，这会使得 _thread_data 变得可读
     "read from outbound byte stream into socket",
     socket,
     Direction::Out,

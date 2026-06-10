@@ -23,6 +23,11 @@ using namespace std;
 //! `_listen` flag and records the source and destination addresses and port numbers
 //! from the TCP header; it uses this information to filter future reads.
 //! \returns a std::optional<TCPSegment> that is empty if the segment was invalid or unrelated
+
+/*
+  依次检查数据包的目的IP，源IP，协议，端口是否符合预期
+  涨知识：监听居然是在连接建立前的概念，如果收到一个 SYN 包，记录对方的地址和端口，就把监听状态关掉，以后只接受这个地址和端口的数据包了
+*/
 optional<TCPSegment> TCPOverIPv4Adapter::unwrap_tcp_in_ip( const InternetDatagram& ip_dgram )
 {
   // is the IPv4 datagram for us?
